@@ -23,9 +23,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
-type Objects struct {
-}
-
 type Users struct {
 	ID        primitive.ObjectID `bson:"_id" json:"id,omitempty"`
 	Email     string             ` json:"email"`
@@ -36,7 +33,14 @@ type Users struct {
 	BirthDate string             `json:"birth_date"`
 }
 
-type Pogination struct {
+//type getting page request<
+type Filter struct {
+	Field        string `json:"field"`
+	QueringValue string `json:"neValue`
+	Page         string `json:"page"`
+}
+
+type PageResponse struct {
 	ID        primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
 	Email     string             ` json:"email"`
 	LastName  string             `json:"last_name"`
@@ -48,49 +52,46 @@ type Pogination struct {
 	Limit     string             `json:"Limit"`
 }
 
-type Filter struct {
-	Field    string `json:"field"`
-	NewValue string `json:"neValue`
-	Page     string `json:"page"`
-}
-
 func main() {
 
 	router := mux.NewRouter().StrictSlash(true)
-
+	//forr adding user send a jason in the request with the parameters of the new user, example:
+	// 	{
+	//                 "email": "Didsdsddsachsasda@gmail.com",
+	//                 "last_name": "Mor",
+	//                 "country": "Vietna,",
+	//                 "city": "Borispol",
+	//                 "gender": "Male",
+	//                 "birth_date": "Friday, April 4, 8527 8:45 AM"
+	// }
 	router.HandleFunc("/user/add", CreateUser).Methods("POST")
+	// to get data about users, send a request with the field and data and page,
+	// in the answer you will receive user data
+	//example of request:
+	// 	{
+	//         "field": "lastname",
+	//         "newValue": "Joe"
+	// }
+	// just add number of page to keep moving through pages
 	router.HandleFunc("/user/get_list", GetUser).Methods("POST")
+	//send data user data in request with his ID to update his info
+	//example:
+	//{
+	// 		"id": "5ed6d4c1ded14738cece7e9e",
+	// 		"email": "Didsdsddsachsasda@gmail.com",
+	// 		"last_name": "Mor",
+	// 		"country": "Vietna,",
+	// 		"city": "Borispol",
+	// 		"gender": "Male",
+	// 		"birth_date": "Friday, April 4, 8527 8:45 AM"
+	// }
 	router.HandleFunc("/user/update_user", UpdateUser).Methods("POST")
 	http.ListenAndServe(":6666", router)
 
 }
 
-func CreateUser(w http.ResponseWriter, r *http.Request) {
-	// If the Content-Type header is present, check that it has the value
-	// application/json.
-	if r.Header.Get("Content-Type") != "" {
+func JsonCheck(err error) string {
 
-		value, _ := header.ParseValueAndParams(r.Header, "Content-Type")
-		if value != "application/json" {
-			msg := "Content-Type header is not application/json"
-			http.Error(w, msg, http.StatusUnsupportedMediaType)
-			return
-		}
-	}
-
-	// Use http.MaxBytesReader to enforce a maximum read of 1MB
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-
-	// Setup the decoder and call the DisallowUnknownFields() method on it.
-	// This will cause Decode() to return a "json: unknown field ..." error
-	// if it encounters any extra unexpected fields in the JSON. Strictly
-	// speaking, it returns an error for "keys which do not match any
-	// non-ignored, exported fields in the destination".
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-
-	var u Users
-	err := dec.Decode(&u)
 	if err != nil {
 		var syntaxError *json.SyntaxError
 		var unmarshalTypeError *json.UnmarshalTypeError
@@ -100,47 +101,57 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 		// which interpolates the location of the problem to make it
 		// easier for the client to fix.
 		case errors.As(err, &syntaxError):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
+			return "Request body contains badly-formed JSON "
 
 		// In some circumstances Decode() may also return an
 		// io.ErrUnexpectedEOF error for syntax errors in the JSON.
 		case errors.Is(err, io.ErrUnexpectedEOF):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON")
-			http.Error(w, msg, http.StatusBadRequest)
+			return "Request body contains badly-formed JSON"
 
 		// Catch any type errors, like trying to assign a string in the
 		// JSON request body to a int field in our User struct.
 		case errors.As(err, &unmarshalTypeError):
-			msg := fmt.Sprintf("Request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
+			return "Request body contains an invalid value for the field "
 
 		// Catch the error caused by extra unexpected fields in the request
 		// body. We extract the field name from the error message and
 		// interpolate it in our custom error message.
 		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
-			msg := fmt.Sprintf("Request body contains unknown field %s", fieldName)
-			http.Error(w, msg, http.StatusBadRequest)
+			return "Request body contains unknown field "
 
 		// An io.EOF error is returned by Decode() if the request body is
 		// empty.
 		case errors.Is(err, io.EOF):
-			msg := "Request body must not be empty"
-			http.Error(w, msg, http.StatusBadRequest)
+			return "Request body must not be empty"
 
 		// Catch the error caused by the request body being too large.
 		case err.Error() == "http: request body too large":
-			msg := "Request body must not be larger than 1MB"
-			http.Error(w, msg, http.StatusRequestEntityTooLarge)
+			return "Request body must not be larger than 1MB"
 
 		// Otherwise default to logging the error and sending a 500 Internal
 		// Server Error response.
 		default:
-			log.Println(err.Error())
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return "enternal server error"
 		}
-		return
+	}
+
+	// Call decode again, using a pointer to an empty anonymous struct as
+	// the destination. If the request body only contained a single JSON
+	// object this will return an io.EOF error. So if we get anything else,
+	// we know that there is additional data in the request body.
+	return ""
+}
+
+func CreateUser(w http.ResponseWriter, r *http.Request) {
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	var u Users
+	err := dec.Decode(&u)
+	if err != nil {
+		msg := JsonCheck(err)
+		http.Error(w, msg, http.StatusBadRequest)
 	}
 
 	// Call decode again, using a pointer to an empty anonymous struct as
@@ -189,55 +200,8 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 	var u Filter
 	err := dec.Decode(&u)
 	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-
-		switch {
-		// Catch any syntax errors in the JSON and send an error message
-		// which interpolates the location of the problem to make it
-		// easier for the client to fix.
-		case errors.As(err, &syntaxError):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// In some circumstances Decode() may also return an
-		// io.ErrUnexpectedEOF error for syntax errors in the JSON.
-		case errors.Is(err, io.ErrUnexpectedEOF):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON")
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch any type errors, like trying to assign a string in the
-		// JSON request body to a int field in our User struct.
-		case errors.As(err, &unmarshalTypeError):
-			msg := fmt.Sprintf("Request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch the error caused by extra unexpected fields in the request
-		// body. We extract the field name from the error message and
-		// interpolate it in our custom error message.
-		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
-			msg := fmt.Sprintf("Request body contains unknown field %s", fieldName)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// An io.EOF error is returned by Decode() if the request body is
-		// empty.
-		case errors.Is(err, io.EOF):
-			msg := "Request body must not be empty"
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch the error caused by the request body being too large.
-		case err.Error() == "http: request body too large":
-			msg := "Request body must not be larger than 1MB"
-			http.Error(w, msg, http.StatusRequestEntityTooLarge)
-
-		// Otherwise default to logging the error and sending a 500 Internal
-		// Server Error response.
-		default:
-			log.Println(err.Error())
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		}
-		return
+		msg := JsonCheck(err)
+		http.Error(w, msg, http.StatusBadRequest)
 	}
 
 	// Call decode again, using a pointer to an empty anonymous struct as
@@ -268,97 +232,21 @@ type UpdUsers struct {
 }
 
 func UpdateUser(w http.ResponseWriter, r *http.Request) {
-	// If the Content-Type header is present, check that it has the value
-	// application/json.
-	if r.Header.Get("Content-Type") != "" {
-
-		value, _ := header.ParseValueAndParams(r.Header, "Content-Type")
-		if value != "application/json" {
-			msg := "Content-Type header is not application/json"
-			http.Error(w, msg, http.StatusUnsupportedMediaType)
-			return
-		}
-	}
-
-	// Use http.MaxBytesReader to enforce a maximum read of 1MB
-	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-
-	// Setup the decoder and call the DisallowUnknownFields() method on it.
-	// This will cause Decode() to return a "json: unknown field ..." error
-	// if it encounters any extra unexpected fields in the JSON. Strictly
-	// speaking, it returns an error for "keys which do not match any
-	// non-ignored, exported fields in the destination".
+	var u UpdUsers
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-	var u UpdUsers
 	err := dec.Decode(&u)
 	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-
-		switch {
-		// Catch any syntax errors in the JSON and send an error message
-		// which interpolates the location of the problem to make it
-		// easier for the client to fix.
-		case errors.As(err, &syntaxError):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON (at position %d)", syntaxError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// In some circumstances Decode() may also return an
-		// io.ErrUnexpectedEOF error for syntax errors in the JSON.
-		case errors.Is(err, io.ErrUnexpectedEOF):
-			msg := fmt.Sprintf("Request body contains badly-formed JSON")
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch any type errors, like trying to assign a string in the
-		// JSON request body to a int field in our User struct.
-		case errors.As(err, &unmarshalTypeError):
-			msg := fmt.Sprintf("Request body contains an invalid value for the %q field (at position %d)", unmarshalTypeError.Field, unmarshalTypeError.Offset)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch the error caused by extra unexpected fields in the request
-		// body. We extract the field name from the error message and
-		// interpolate it in our custom error message.
-		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
-			msg := fmt.Sprintf("Request body contains unknown field %s", fieldName)
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// An io.EOF error is returned by Decode() if the request body is
-		// empty.
-		case errors.Is(err, io.EOF):
-			msg := "Request body must not be empty"
-			http.Error(w, msg, http.StatusBadRequest)
-
-		// Catch the error caused by the request body being too large.
-		case err.Error() == "http: request body too large":
-			msg := "Request body must not be larger than 1MB"
-			http.Error(w, msg, http.StatusRequestEntityTooLarge)
-
-		// Otherwise default to logging the error and sending a 500 Internal
-		// Server Error response.
-		default:
-			log.Println(err.Error())
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		}
-		return
+		msg := JsonCheck(err)
+		http.Error(w, msg, http.StatusBadRequest)
 	}
-
-	// Call decode again, using a pointer to an empty anonymous struct as
-	// the destination. If the request body only contained a single JSON
-	// object this will return an io.EOF error. So if we get anything else,
-	// we know that there is additional data in the request body.
+	log.Print(u.ID)
 	err = dec.Decode(&struct{}{})
 	if err != io.EOF {
 		msg := "Request body must only contain a single JSON object"
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	if len(u.ID) == 0 {
-		msg := "Please send user id"
-		http.Error(w, msg, http.StatusUnprocessableEntity)
-	}
-	log.Print(u.ID)
 	result := UserUpdate(u.ID, u)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -378,7 +266,7 @@ func CheckUser(filter Filter) (lists []Users, info PaginationData) {
 	var limit int64
 	limit = 10
 
-	r := bson.D{{filter.Field, filter.NewValue}}
+	r := bson.D{{filter.Field, filter.QueringValue}}
 	page, _ := strconv.ParseInt(filter.Page, 10, 64)
 	paginatedData, err := New(collection).Limit(limit).Page(page).Select(limitPerUser).Filter(r).Find()
 	if err != nil {
@@ -400,8 +288,6 @@ func CheckUser(filter Filter) (lists []Users, info PaginationData) {
 func UserUpdate(id string, user UpdUsers) string {
 	s, _ := primitive.ObjectIDFromHex(user.ID)
 	collection := MongoInit()
-
-	filter.Field = "_id"
 	updateResult, err := collection.UpdateOne(context.TODO(), bson.D{{"_id", s}}, bson.D{
 		{"$set", bson.D{
 			{"lastname", user.LastName}, {"email", user.Email}, {"city", user.City}, {"birthdate", user.BirthDate}, {"country", user.Country}, {"gender", user.Gender},
@@ -409,8 +295,11 @@ func UserUpdate(id string, user UpdUsers) string {
 	if err != nil {
 		log.Fatal(err, s)
 	}
+	if updateResult.MatchedCount == 0 {
+		return "invalid id"
+	}
 	log.Printf("Matched %v documents and updated %v documents.\n", updateResult.MatchedCount, updateResult.ModifiedCount)
-	return "successfully updated"
+	return "user successfully updated"
 }
 
 func AddUser(user Users) string {
@@ -418,7 +307,6 @@ func AddUser(user Users) string {
 	collection := MongoInit()
 	filter := Filter{"email", user.Email, "1"}
 	checkUserInBase, _ = CheckUser(filter)
-	log.Print(checkUserInBase)
 	if len(checkUserInBase) != 0 {
 		return "this email already used"
 	}
