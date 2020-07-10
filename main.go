@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -90,58 +89,6 @@ func main() {
 
 }
 
-func JsonCheck(err error) string {
-
-	if err != nil {
-		var syntaxError *json.SyntaxError
-		var unmarshalTypeError *json.UnmarshalTypeError
-
-		switch {
-		// Catch any syntax errors in the JSON and send an error message
-		// which interpolates the location of the problem to make it
-		// easier for the client to fix.
-		case errors.As(err, &syntaxError):
-			return "Request body contains badly-formed JSON "
-
-		// In some circumstances Decode() may also return an
-		// io.ErrUnexpectedEOF error for syntax errors in the JSON.
-		case errors.Is(err, io.ErrUnexpectedEOF):
-			return "Request body contains badly-formed JSON"
-
-		// Catch any type errors, like trying to assign a string in the
-		// JSON request body to a int field in our User struct.
-		case errors.As(err, &unmarshalTypeError):
-			return "Request body contains an invalid value for the field "
-
-		// Catch the error caused by extra unexpected fields in the request
-		// body. We extract the field name from the error message and
-		// interpolate it in our custom error message.
-		case strings.HasPrefix(err.Error(), "json: unknown field "):
-			return "Request body contains unknown field "
-
-		// An io.EOF error is returned by Decode() if the request body is
-		// empty.
-		case errors.Is(err, io.EOF):
-			return "Request body must not be empty"
-
-		// Catch the error caused by the request body being too large.
-		case err.Error() == "http: request body too large":
-			return "Request body must not be larger than 1MB"
-
-		// Otherwise default to logging the error and sending a 500 Internal
-		// Server Error response.
-		default:
-			return "enternal server error"
-		}
-	}
-
-	// Call decode again, using a pointer to an empty anonymous struct as
-	// the destination. If the request body only contained a single JSON
-	// object this will return an io.EOF error. So if we get anything else,
-	// we know that there is additional data in the request body.
-	return ""
-}
-
 func CreateUser(w http.ResponseWriter, r *http.Request) {
 
 	dec := json.NewDecoder(r.Body)
@@ -150,34 +97,25 @@ func CreateUser(w http.ResponseWriter, r *http.Request) {
 	var u Users
 	err := dec.Decode(&u)
 	if err != nil {
-		msg := JsonCheck(err)
-		http.Error(w, msg, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 
-	// Call decode again, using a pointer to an empty anonymous struct as
-	// the destination. If the request body only contained a single JSON
-	// object this will return an io.EOF error. So if we get anything else,
-	// we know that there is additional data in the request body.
 	err = dec.Decode(&struct{}{})
 	if err != io.EOF {
-		msg := "Request body must only contain a single JSON object"
-		http.Error(w, msg, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	emailCheck := AddUser(u)
-	if emailCheck != "user successfully added" {
-		msg := emailCheck
-		http.Error(w, msg, http.StatusConflict)
+	err = AddUser(u)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 }
 
 func GetUser(w http.ResponseWriter, r *http.Request) {
-	// If the Content-Type header is present, check that it has the value
-	// application/json.
 	if r.Header.Get("Content-Type") != "" {
-
 		value, _ := header.ParseValueAndParams(r.Header, "Content-Type")
 		if value != "application/json" {
 			msg := "Content-Type header is not application/json"
@@ -185,33 +123,17 @@ func GetUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-
-	// Use http.MaxBytesReader to enforce a maximum read of 1MB
 	r.Body = http.MaxBytesReader(w, r.Body, 1048576)
-
-	// Setup the decoder and call the DisallowUnknownFields() method on it.
-	// This will cause Decode() to return a "json: unknown field ..." error
-	// if it encounters any extra unexpected fields in the JSON. Strictly
-	// speaking, it returns an error for "keys which do not match any
-	// non-ignored, exported fields in the destination".
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
-
 	var u Filter
 	err := dec.Decode(&u)
 	if err != nil {
-		msg := JsonCheck(err)
-		http.Error(w, msg, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
-
-	// Call decode again, using a pointer to an empty anonymous struct as
-	// the destination. If the request body only contained a single JSON
-	// object this will return an io.EOF error. So if we get anything else,
-	// we know that there is additional data in the request body.
 	err = dec.Decode(&struct{}{})
 	if err != io.EOF {
-		msg := "Request body must only contain a single JSON object"
-		http.Error(w, msg, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	usersFound, paginInfo := CheckUser(u)
@@ -237,8 +159,7 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 	dec.DisallowUnknownFields()
 	err := dec.Decode(&u)
 	if err != nil {
-		msg := JsonCheck(err)
-		http.Error(w, msg, http.StatusBadRequest)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	}
 	log.Print(u.ID)
 	err = dec.Decode(&struct{}{})
@@ -247,14 +168,19 @@ func UpdateUser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	result := UserUpdate(u.ID, u)
+	result, err := UserUpdate(u.ID, u)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprint(w, result)
 }
 
 func CheckUser(filter Filter) (lists []Users, info PaginationData) {
-	collection := MongoInit()
+	collection, err := MongoInit()
+
 	limitPerUser := bson.D{
 		{"email", 1},
 		{"lastname", 1},
@@ -285,58 +211,63 @@ func CheckUser(filter Filter) (lists []Users, info PaginationData) {
 //unfortunately forced to create another type because:
 //cannot transform type string to a BSON Document: WriteString can only write while positioned on a Element or Value but is positioned on a TopLevel
 
-func UserUpdate(id string, user UpdUsers) string {
+func UserUpdate(id string, user UpdUsers) (string, error) {
 	s, _ := primitive.ObjectIDFromHex(user.ID)
-	collection := MongoInit()
+	collection, err := MongoInit()
+	if err != nil {
+		return "", err
+	}
 	updateResult, err := collection.UpdateOne(context.TODO(), bson.D{{"_id", s}}, bson.D{
 		{"$set", bson.D{
 			{"lastname", user.LastName}, {"email", user.Email}, {"city", user.City}, {"birthdate", user.BirthDate}, {"country", user.Country}, {"gender", user.Gender},
 		}}})
 	if err != nil {
-		log.Fatal(err, s)
+		return "", err
 	}
 	if updateResult.MatchedCount == 0 {
-		return "invalid id"
+		return "", errors.New("invalid id")
 	}
 	log.Printf("Matched %v documents and updated %v documents.\n", updateResult.MatchedCount, updateResult.ModifiedCount)
-	return "user successfully updated"
+	return "user successfully updated", nil
 }
 
-func AddUser(user Users) string {
+func AddUser(user Users) error {
 	var checkUserInBase []Users
-	collection := MongoInit()
+	collection, err := MongoInit()
+	if err != nil {
+		return err
+	}
 	filter := Filter{"email", user.Email, "1"}
 	checkUserInBase, _ = CheckUser(filter)
 	if len(checkUserInBase) != 0 {
-		return "this email already used"
+		errors.New("something wen't wromg")
 	}
 	if len(checkUserInBase) == 0 {
 		user.ID = primitive.NewObjectID()
 		_, err := collection.InsertOne(context.TODO(), user)
 		if err != nil {
-			log.Fatal(err)
+			return err
 		}
 		log.Print("successfully added user: ", user)
-		return "user successfully added"
+		return nil
 	}
-	return "something went wrong"
+	return errors.New("something wen't wromg")
 }
 
-func MongoInit() *mongo.Collection {
-
+func MongoInit() (*mongo.Collection, error) {
 	client, err := mongo.NewClient(options.Client().ApplyURI("mongodb://127.0.0.1:27017"))
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	err = client.Connect(context.TODO())
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	err = client.Ping(context.TODO(), nil)
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	log.Printf("Connected to MongoDB!")
 	collection := client.Database("test").Collection("trainers")
-	return collection
+	return collection, nil
 }
